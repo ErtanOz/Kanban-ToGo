@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kanban Task Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* Tailwind's slate-50 */
+        }
+        /* Custom scrollbar for task containers (optional) */
+        .tasks-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .tasks-container::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1; /* slate-300 */
+            border-radius: 4px;
+        }
+        .tasks-container::-webkit-scrollbar-track {
+            background-color: #f1f5f9; /* slate-100 */
+        }
+        /* Styling for the task being dragged */
+        .task-dragging {
+            opacity: 0.6;
+            transform: rotate(2deg);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); /* shadow-xl */
+        }
+        /* Highlight for drop zones */
+        .tasks-container.is-dragging-over {
+            background-color: #e0f2fe; /* Tailwind's sky-100 or similar */
+            outline: 2px dashed #38bdf8; /* Tailwind's sky-500 */
+            outline-offset: -2px;
+        }
+        /* Custom cursor for grab/grabbing */
+        .task-card {
+            cursor: grab;
+        }
+        body.cursor-grabbing, body.cursor-grabbing * {
+            cursor: grabbing !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 flex-grow">
+        <header class="mb-8 text-center">
+            <h1 class="text-4xl font-bold text-slate-800">Kanban Task Tracker</h1>
+            <p class="text-slate-600 mt-1">Organize your work, one task at a time.</p>
+        </header>
+
+        <div class="mb-8 p-4 sm:p-6 bg-white rounded-xl shadow-lg">
+            <div class="flex flex-col sm:flex-row items-stretch gap-3">
+                <input type="text" id="newTaskInput" placeholder="Enter new task description..." 
+                       class="flex-grow border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+                       aria-label="New task description">
+                <button id="addTaskBtn" 
+                        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition duration-150 ease-in-out transform hover:scale-105 active:scale-95">
+                    Add Task
+                </button>
+            </div>
+            <p id="error-message" class="text-red-500 text-sm mt-2 hidden"></p>
+        </div>
+
+        <div id="kanbanBoard" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div id="todo" class="column bg-slate-100 rounded-xl shadow-md flex flex-col overflow-hidden">
+                <h2 class="text-xl font-semibold text-slate-700 p-4 border-b-4 border-red-400 sticky top-0 bg-slate-100 z-10">
+                    To Do <span class="task-count text-sm font-normal text-slate-500 ml-1"></span>
+                </h2>
+                <div class="tasks-container flex-grow p-4 space-y-3 min-h-[200px] overflow-y-auto"
+                     ondragenter="handleDragEnter(event)"
+                     ondragleave="handleDragLeave(event)"
+                     ondragover="handleDragOver(event)"
+                     ondrop="drop(event)">
+                    </div>
+            </div>
+
+            <div id="inprogress" class="column bg-slate-100 rounded-xl shadow-md flex flex-col overflow-hidden">
+                <h2 class="text-xl font-semibold text-slate-700 p-4 border-b-4 border-amber-400 sticky top-0 bg-slate-100 z-10">
+                    In Progress <span class="task-count text-sm font-normal text-slate-500 ml-1"></span>
+                </h2>
+                <div class="tasks-container flex-grow p-4 space-y-3 min-h-[200px] overflow-y-auto"
+                     ondragenter="handleDragEnter(event)"
+                     ondragleave="handleDragLeave(event)"
+                     ondragover="handleDragOver(event)"
+                     ondrop="drop(event)">
+                    </div>
+            </div>
+
+            <div id="done" class="column bg-slate-100 rounded-xl shadow-md flex flex-col overflow-hidden">
+                <h2 class="text-xl font-semibold text-slate-700 p-4 border-b-4 border-green-400 sticky top-0 bg-slate-100 z-10">
+                    Done <span class="task-count text-sm font-normal text-slate-500 ml-1"></span>
+                </h2>
+                <div class="tasks-container flex-grow p-4 space-y-3 min-h-[200px] overflow-y-auto"
+                     ondragenter="handleDragEnter(event)"
+                     ondragleave="handleDragLeave(event)"
+                     ondragover="handleDragOver(event)"
+                     ondrop="drop(event)">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="text-center p-4 text-sm text-slate-500">
+       Kanban Task Tracker &copy; 2024-2025 produced by ErOz
+    </footer>
+
+    <script>
+        // Global state for tasks
+        let tasks = [];
+        const errorMessageElement = document.getElementById('error-message');
+
+        // --- Task Management Functions ---
+        /**
+         * Loads tasks from local storage and renders the board.
+         */
+        function loadTasks() {
+            const storedTasks = localStorage.getItem('kanbanTasks');
+            if (storedTasks) {
+                tasks = JSON.parse(storedTasks);
+            }
+            renderBoard();
+        }
+
+        /**
+         * Saves the current tasks array to local storage.
+         */
+        function saveTasks() {
+            localStorage.setItem('kanbanTasks', JSON.stringify(tasks));
+        }
+
+        /**
+         * Renders all tasks onto the board in their respective columns.
+         */
+        function renderBoard() {
+            // Clear existing tasks from columns and update counts
+            document.querySelectorAll('.column').forEach(columnElement => {
+                const taskContainer = columnElement.querySelector('.tasks-container');
+                const taskCountElement = columnElement.querySelector('.task-count');
+                if (!taskContainer) return;
+                
+                taskContainer.innerHTML = ''; // Clear only tasks
+
+                const columnId = columnElement.id;
+                const columnTasks = tasks.filter(task => task.status === columnId);
+
+                if (taskCountElement) {
+                    taskCountElement.textContent = `(${columnTasks.length})`;
+                }
+
+                if (columnTasks.length === 0) {
+                    addPlaceholderToContainer(taskContainer, columnId);
+                } else {
+                    columnTasks.forEach(task => {
+                        const taskElement = createTaskElement(task);
+                        taskContainer.appendChild(taskElement);
+                    });
+                }
+            });
+        }
+        
+        /**
+         * Adds a placeholder message to an empty task container.
+         * @param {HTMLElement} container - The task container element.
+         * @param {string} columnId - The ID of the column.
+         */
+        function addPlaceholderToContainer(container, columnId) {
+            const placeholder = document.createElement('p');
+            placeholder.className = 'text-sm text-slate-400 italic text-center py-4 px-2 select-none';
+            if (columnId === 'todo') placeholder.textContent = 'No tasks yet. Add one above!';
+            else if (columnId === 'inprogress') placeholder.textContent = 'Drag tasks from "To Do" to start progress.';
+            else if (columnId === 'done') placeholder.textContent = 'Drag tasks here when completed.';
+            container.appendChild(placeholder);
+        }
+
+
+        /**
+         * Creates an HTML element for a single task.
+         * @param {object} task - The task object {id, text, status}.
+         * @returns {HTMLElement} The created task card element.
+         */
+        function createTaskElement(task) {
+            const div = document.createElement('div');
+            div.id = task.id;
+            div.className = `task-card bg-white p-3.5 rounded-lg shadow-sm border-l-4 ${getBorderColor(task.status)} transition-shadow hover:shadow-md`;
+            div.draggable = true;
+            div.ondragstart = (event) => dragStart(event);
+            div.ondragend = (event) => dragEnd(event);
+
+            div.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <p class="text-slate-800 mr-2 break-words text-sm leading-relaxed">${task.text}</p>
+                    <button class="text-slate-400 hover:text-red-600 text-lg font-bold p-1 -mr-1 -mt-1 transition-colors" 
+                            onclick="deleteTask('${task.id}', event)" 
+                            title="Delete task"
+                            aria-label="Delete task">
+                        &times; 
+                    </button>
+                </div>
+            `;
+            return div;
+        }
+
+        /**
+         * Gets the border color class based on task status.
+         * @param {string} status - The status of the task ('todo', 'inprogress', 'done').
+         * @returns {string} Tailwind CSS border color class.
+         */
+        function getBorderColor(status) {
+            if (status === 'todo') return 'border-red-400';
+            if (status === 'inprogress') return 'border-amber-400';
+            if (status === 'done') return 'border-green-400';
+            return 'border-slate-400'; // Default
+        }
+
+        /**
+         * Adds a new task to the "To Do" column.
+         */
+        function addTask() {
+            const input = document.getElementById('newTaskInput');
+            const text = input.value.trim();
+
+            if (text === '') {
+                errorMessageElement.textContent = 'Task description cannot be empty.';
+                errorMessageElement.classList.remove('hidden');
+                input.focus();
+                return;
+            }
+            errorMessageElement.classList.add('hidden');
+
+            const newTask = {
+                id: `task-${Date.now()}`, // Unique ID based on timestamp
+                text: text,
+                status: 'todo' // New tasks always start in 'To Do'
+            };
+            tasks.push(newTask);
+            input.value = ''; // Clear input field
+            saveTasks();
+            renderBoard();
+        }
+
+        /**
+         * Deletes a task from the board.
+         * @param {string} taskId - The ID of the task to delete.
+         * @param {Event} event - The click event.
+         */
+        function deleteTask(taskId, event) {
+            event.stopPropagation(); // Prevent triggering other events like drag
+            tasks = tasks.filter(task => task.id !== taskId);
+            saveTasks();
+            renderBoard();
+        }
+
+        // --- Drag and Drop Functions ---
+
+        /**
+         * Handles the start of a drag operation.
+         * @param {DragEvent} event - The drag event.
+         */
+        function dragStart(event) {
+            event.dataTransfer.setData("text/plain", event.target.id);
+            event.dataTransfer.effectAllowed = "move";
+            // Timeout to allow the browser to render the original element before applying class
+            setTimeout(() => {
+                 event.target.classList.add('task-dragging');
+            },0);
+            document.body.classList.add('cursor-grabbing');
+        }
+
+        /**
+         * Handles the end of a drag operation.
+         * @param {DragEvent} event - The drag event.
+         */
+        function dragEnd(event) {
+            event.target.classList.remove('task-dragging');
+            document.body.classList.remove('cursor-grabbing');
+            // Clean up any lingering drag-over styles on columns
+            document.querySelectorAll('.tasks-container.is-dragging-over').forEach(cont => {
+                cont.classList.remove('is-dragging-over');
+            });
+        }
+        
+        /**
+         * Handles drag enter on a tasks container.
+         * @param {DragEvent} event - The drag event.
+         */
+        function handleDragEnter(event) {
+            const tasksContainer = event.currentTarget;
+            // Check if the item being dragged is one of our tasks
+            if (event.dataTransfer.types.includes("text/plain")) {
+                 // Remove from other containers first
+                document.querySelectorAll('.tasks-container.is-dragging-over').forEach(cont => {
+                    if (cont !== tasksContainer) {
+                        cont.classList.remove('is-dragging-over');
+                    }
+                });
+                tasksContainer.classList.add('is-dragging-over');
+            }
+        }
+
+        /**
+         * Handles drag over a tasks container (necessary to allow dropping).
+         * @param {DragEvent} event - The drag event.
+         */
+        function handleDragOver(event) {
+            event.preventDefault(); // This is crucial to allow the drop event.
+            event.dataTransfer.dropEffect = "move";
+        }
+
+        /**
+         * Handles drag leave from a tasks container.
+         * @param {DragEvent} event - The drag event.
+         */
+        function handleDragLeave(event) {
+            const tasksContainer = event.currentTarget;
+            // Check if the mouse has moved to an element outside of this tasksContainer
+            if (event.relatedTarget && tasksContainer.contains(event.relatedTarget)) {
+                return; // Still inside or moved to a child, do nothing
+            }
+            tasksContainer.classList.remove('is-dragging-over');
+        }
+
+        /**
+         * Handles the drop event on a tasks container.
+         * @param {DragEvent} event - The drop event.
+         */
+        function drop(event) {
+            event.preventDefault();
+            const targetTasksContainer = event.currentTarget; // This is the .tasks-container div
+            targetTasksContainer.classList.remove('is-dragging-over');
+
+            const taskId = event.dataTransfer.getData("text/plain");
+            const task = tasks.find(t => t.id === taskId);
+
+            if (!task) return; // Should not happen if drag started correctly
+
+            // The ID of the tasks-container's parent column is what we need for status
+            const targetColumnId = targetTasksContainer.parentElement.id;
+            const oldStatus = task.status;
+            const newStatus = targetColumnId;
+
+            if (oldStatus !== newStatus) {
+                task.status = newStatus;
+                if (newStatus === 'done') {
+                    triggerConfetti(event.clientX, event.clientY);
+                }
+            }
+            saveTasks();
+            renderBoard();
+        }
+
+        // --- Confetti Function ---
+        /**
+         * Triggers a confetti animation.
+         * @param {number} clientX - The x-coordinate of the drop event.
+         * @param {number} clientY - The y-coordinate of the drop event.
+         */
+        function triggerConfetti(clientX, clientY) {
+            if (typeof confetti === 'function') {
+                // Convert clientX/Y to viewport normalized coordinates (0 to 1)
+                const originX = clientX / window.innerWidth;
+                const originY = clientY / window.innerHeight;
+
+                confetti({
+                    particleCount: 150,
+                    spread: 80,
+                    origin: { x: originX, y: originY - 0.1 }, // slightly above the drop point
+                    angle: 90, // shoot upwards
+                    startVelocity: 30,
+                    gravity: 0.8,
+                    drift: 0, // no sideways drift initially
+                    ticks: 300, // duration of confetti
+                    colors: ['#2563eb', '#4ade80', '#facc15', '#f97316', '#ec4899'] // blue, green, yellow, orange, pink
+                });
+            }
+        }
+
+        // --- Event Listeners ---
+        document.addEventListener('DOMContentLoaded', () => {
+            const addTaskButton = document.getElementById('addTaskBtn');
+            const newTaskInput = document.getElementById('newTaskInput');
+
+            addTaskButton.addEventListener('click', addTask);
+            newTaskInput.addEventListener('keypress', function(event) {
+                if (event.key === 'Enter') {
+                    addTask();
+                }
+            });
+            // Clear error message on input
+            newTaskInput.addEventListener('input', () => {
+                if (!errorMessageElement.classList.contains('hidden')) {
+                    errorMessageElement.classList.add('hidden');
+                }
+            });
+
+
+            loadTasks(); // Load tasks from local storage and render the board
+        });
+    </script>
+</body>
+</html>
